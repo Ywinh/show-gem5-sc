@@ -44,13 +44,34 @@ The last comment block of each slide will be treated as slide notes. It will be 
 -->
 
 ---
+layout: two-cols
+layoutClass: gap-16
+level: 3
+---
+
+# Overview
+
+<Toc text-sm minDepth="1" maxDepth="2" />
+
+---
 transition: fade-out
 level: 2
 ---
 
 # 背景介绍
+Gem5 提供了周期精确、灵活可配置的CPU、cache、memory、bus等组件
 
-Gem5提供了高精度、灵活可配置的CPU仿真模型。我们的仿真器则使用SystemC TLM编写，能否将二者结合？
+![](./images/gem5_overview.png){width=500 style="display:block; margin:auto;"}
+
+
+---
+transition: fade-out
+level: 3
+---
+
+# 背景介绍
+
+我们的仿真器使用SystemC TLM编写，能否将Gem5与TLM结合？
 
 - 目的：使用Gem5配置CPU模型，接入到仿真器中替换原有的SystemC CPU模型，并且保证与其他未替换的SC模块正确交互
 - 可行性：Gem5和SystemC都是C++写的，gem5 可以被构建为一个 C++ 库并嵌入到 SystemC 仿真环境中运行
@@ -63,15 +84,7 @@ Gem5提供了高精度、灵活可配置的CPU仿真模型。我们的仿真器�
 <!--
 Here is another comment.
 -->
----
-layout: two-cols
-layoutClass: gap-16
-level: 3
----
 
-# Overview
-
-<Toc text-sm minDepth="1" maxDepth="2" />
 
 ---
 transition: fade-out
@@ -103,6 +116,22 @@ class ResponsePort {
    ...
 };
 ```
+
+---
+transition: fade-out
+level: 3
+class: px-20
+---
+
+# Gem5通信
+提供三种内存访问模式：Timing、Atomic、Functional
+
+- Timing mode (时序模式)：最真实的仿真模式，模拟了完整的存储层级延迟和流水线并发，访问过程会自动推进仿真时间。
+
+- Atomic mode (原子模式)：专为加速仿真设计，访问瞬间完成且不可打断，只返回一个延迟估算值，由发起者决定如何推进时间。
+
+- Functional mode (功能模式)：仅用于调试或初始化（如加载二进制文件），通过纯函数调用直接读写数据，完全不消耗也不影响仿真时间（零耗时）。
+
 ---
 transition: fade-out
 level: 3
@@ -129,8 +158,8 @@ level: 2
 TLM2.0中，一次“事务”被抽象为一个socket，“事务”的发起者为initiator，“事务”的响应方为target，initiator socket和target socket之间完成信息交互。
 
 4 种 transport 接口：
-1. **Blocking**：loosely-timed，通过单次函数调用实现完整事务，仅模拟事务开始和结束时的时间点。阻塞接口虽能快速执行事务，但其时间精度有限
-2. **Non-blocking**：approximately-timed，模拟单次transaction过程中initiator和target的一系列交互。4个阶段
+1. **Blocking**：loosely-timed，通过单次函数调用实现完整事务，一方执行时另一方阻塞。阻塞接口虽能快速执行事务，但其时间精度有限
+2. **Non-blocking**：approximately-timed，模拟单次transaction过程中initiator和target的一系列交互，一方执行时另一方可以。4个阶段
 3. **Debug**：与blocking传输类似，但是不考虑时间因素且无任何副作用。适用于仿真过程中的初始化与调试操作
 4. **Direct memory interface（DMI）**：一般用于功能建模，target把memory的指针传给initiator，不用transaction。没有timing
 
@@ -212,18 +241,19 @@ level: 3
 
 #  COMBINING GEM5 AND TLM
 需要结合二者的机制来同时满足 retry 和 exclusion rules，规则复杂但是实现还是比较简单
-- 从 gem5 到 SystemC：当 TLM 方忙时，如何让 gem5 停下来并在 TLM 空闲时自动重试？
-  - 忙拒绝：gem5会通过req函数的返回值判断是否成功发出请求，TLM方忙的时候给出一个标志，当这个标志为真时return false即可，在实现中，当TLM处于BEGIN_REQ时会有一个blockingRequest
+- 从 gem5 到 SystemC：当 TLM 方忙时，如何让 gem5 停下来并在 TLM 空闲时重发请求？
+  - 忙拒绝：gem5会通过req函数的返回值判断是否成功发出请求，TLM方忙的时候给出一个标志，当忙时return false即可；在实现中，当TLM处于BEGIN_REQ时会挂起一个blockingRequest
   - 空闲时重试：TLM进入END_REQ阶段时会解除阻塞然后检查是否有被拒绝的请求，如果有则发起gem5::sendRetryReq
 - 从 SystemC 到 gem5：当 gem5 忙时，如何利用 gem5 的规则卡住 SystemC 发起方？
-  - 利用 gem5的忙拒绝机制，TLM 调用 sendTimingReq 如果为 false 则卡住，然后标记需要retry，由于TLM exclusion机制，此时会卡在这里，也不会有下一个BEGIN_REQ发过来
-  - gem5空闲时（上一个请求进入END_REQ时）会唤醒systemc，通过sendReqRetry调用到 recvReqRetry，这个函数内部会唤醒那个pending的req，重新发送BEGIN_REQ，此时
+  - 利用 gem5的忙拒绝机制，TLM 新的 BEGIN_REQ 会调用 sendTimingReq，如果为 false 则挂起，然后标记需要retry，由于TLM exclusion机制，此时会卡在这里，也不会有下一个BEGIN_REQ发过来
+  - gem5空闲时（上一个请求进入END_REQ时）会唤醒systemc，通过sendReqRetry调用到 recvReqRetry，这个函数内部会唤醒那个pending的req，重新发送BEGIN_REQ
 
 ---
 transition: fade-out
 level: 3
 ---
-# TLM为master，Gem5为slave
+
+# Gem5为master，TLM为slave
 <div grid="~ cols-2 gap-2" m="t-2">
 
 ![](./images/gem5-to-tlm1.png){width=400 style="display:block; margin:auto;"}
@@ -232,14 +262,12 @@ level: 3
 
 </div>
 
-
-
 ---
 transition: fade-out
 level: 3
 ---
 
-# Gem5为master，TLM为slave
+# TLM为master，Gem5为slave
 
 <div grid="~ cols-2 gap-2" m="t-2">
 
@@ -248,7 +276,6 @@ level: 3
 ![](./images/tlm-to-gem52.png){width=400 style="display:block; margin:auto;"}
 
 </div>
-
 
 ---
 transition: fade-out
@@ -276,32 +303,48 @@ void recvFunctionalSnoop(gem5::PacketPtr packet);
 - tlm->gem5：TLM需要实现bw，fw在brdige已经实现
 
 ---
+layout: center
+class: text-center
+level: 3
+---
+
+# QA
+
+---
 transition: fade-out
 level: 2
 ---
+
 # gem5 与 TLM 计时方式的统一
-gem5 在如何计时与 TLM 不同
+gem5时间由CPU推进，TLM则定期将控制权让给调度器推进时间
 
-时间上的差异
-- TLM 是先执行事件，然后加上一个 delay 同步时间。但是 gem5 是需要一个预估时间，然后插入到事件调度队列，等待时间到了之后才触发该事件
-- TLM 是先做完逻辑，再追加时间，而 gem5 是严格按照时间表触发逻辑。
+<div grid="~ cols-3 gap-2" m="t-2">
 
-e.g：
-- 比如说 TLM 实现了访存，在 gem5 这边不能像 TLM 一样只是单纯的把 delay 加上去，他必须插入一个事件，然后当全局时钟到了指定 Tick 之后才能触发该事件
-- 对于 gem5 来说，他不知道TLM的存在，他只知道自己发起请求，然后**插入一个访存事件**，有多少延迟，等待访存事件触发（完成）之后返回 response，这样就完成了一次完整的读写事务
+![alt text](./images/gem5-time1.png){width=200 style="display:block; margin:auto;"}
+
+![alt text](./images/gem5-time2.png){width=200 style="display:block; margin:auto;"}
+
+![alt text](./images/gem5-time3.png){width=200 style="display:block; margin:auto;"}
+
+</div>
+
+![](./images/TLM_q.drawio.svg){width=600 style="display:block; margin:auto;"}
 
 ---
 transition: fade-out
-level: 3
+level: 2
 ---
-# gem5 与 TLM 计时方式的统一
 
-总结：
-- 时钟实际还是以 gem5 为主，TLM 侧只是记录一次事务的延迟，然后作为一个事件插入到 gem5 中，使其时间前进
-- 一次交互（req或者resp握手一次）： curTick + gem5延时 + TLM延时
-  - gem5 → TLM 方向：延迟存在 packet->headerDelay 中
-  - TLM → gem5 方向：延迟通过 nb_transport_bw 的 delay 参数返回
-  - gem5 事件调度：PayloadEvent::notify 将 delay 转换为 gem5::Tick，然后调用 port.owner.schedule(this, nextEventTick) 在 gem5 中插入事件
+# gem5 与 TLM 计时方式的统一
+gem5 在计时方面与 TLM 不同，关键点在于正确统计另一方延迟，插入到自己的调度队列中
+
+时间上的差异
+- TLM：先执行事件，然后加上一个 delay 同步时间；或者插入时间队列，等待仿真器时间到达后触发
+- gem5：严格按照时间表触发逻辑；gem5 需要一个预估时间，然后插入到事件调度队列，等待时间到了之后才触发该事件
+
+结合起来：
+- 对于 gem5 来说，它不知道TLM的存在，他只知道自己发起请求，然后**插入访存事件**，有多少延迟，等待访存事件触发（完成）之后返回 response，这样就完成了一次完整的读写事务
+- 对于 TLM 来说，他也不知道 gem5 的存在，提取 gem5 的延迟，然后加到自己的时间上或者插入队列
 
 ---
 transition: fade-out
@@ -373,6 +416,20 @@ class: px-0
 
 </div>
 
+---
+transition: fade-out
+level: 3
+---
+
+# gem5 与 TLM 计时方式的统一
+
+总结：
+- 两边各自有一个时钟，每次都需要先同步，
+    - 记录另一侧的总延时，插入到当前调度队列中
+- 一次交互（req或者resp握手一次）： curTick + gem5延时 + TLM延时
+  - gem5 → TLM 方向：延迟位于 packet->headerDelay 中
+  - TLM → gem5 方向：延迟位于 nb_transport_bw 的 delay 参数返回
+  - gem5 事件调度：TLM侧，PayloadEvent::notify 将 delay 转换为 gem5::Tick，然后调用 port.owner.schedule(this, nextEventTick) 在 gem5 中插入事件
 
 ---
 layout: center
@@ -384,3 +441,4 @@ level: 3
 
 
 <PoweredBySlidev mt-10 />
+/>
